@@ -1,5 +1,6 @@
 import sqlite3
-import hashlib
+from argon2 import PasswordHasher
+ph = PasswordHasher()
 conn = sqlite3.connect("WPMG.db")
 cur = conn.cursor()
 for row in cur.execute("""SELECT * FROM News;"""):
@@ -17,7 +18,7 @@ try:
     cur.execute(f"""INSERT INTO Employees
                 (name, pw)
                 VALUES
-                ("{name}", "{hashlib.sha256(PW.encode()).hexdigest()}");""")
+                ("{name}", '{ph.hash(PW)}');""")
     conn.commit()
 except sqlite3.OperationalError:
     cur.execute("""CREATE TABLE IF NOT EXISTS Employees (
@@ -28,7 +29,7 @@ except sqlite3.OperationalError:
     cur.execute(f"""INSERT INTO Employees
                 (name, pw)
                 VALUES
-                ("{name}", "{hashlib.sha256(PW.encode()).hexdigest()}");""")
+                ("{name}", "{ph.hash(PW)}");""")
     conn.commit()
     print("Create Emplyees")
 
