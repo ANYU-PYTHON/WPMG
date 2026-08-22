@@ -126,6 +126,11 @@ def get_zip_data(folder_path):
                 fp = os.path.join(root, file)
                 zf.write(fp, os.path.relpath(fp, folder_path))
     return zip_buffer.getvalue()
+
+@stm.dialog("プロジェクト新規作成")
+def make_prg_user(usernum):
+    stm.text_input("プロジェクト名")
+
 @stm.dialog("すべてダウンロード")
 def all_DL(usernum, prg_name):
     log.debug(f"{stm.session_state.login[0]}_all_DL> COLL")
@@ -201,25 +206,122 @@ def create_nodes(path: Path):
 
     return nodes
 
-def make_USER(username, passwd, prg):
-    passwd = ph.hash(passwd)
-    cur.execute(f"""INSERT INTO Employees
-                    (name, pw)
-                    VALUES
-                    ("{username}", '{passwd}');""")  ###########################
-    conn.commit()
 
-def admin_aut(pw1, pw2):
+def rt_prg(usernum):
+    log.debug(f"admin_rt_prg_COLL")
+    folder = Path(f"./WPMG/{usernum}/")
+    file = folder / ".wpmginfo"
+    with open(file, "rb") as f:
+        data = pickle.load(f)
+    rt_list = []
+    for i in data:
+        rt_list.append(i)
+    return rt_list
+
+def del_user(usernum):
+    log.debug(f"admin_del_user_COLL")
+    cur.execute(
+            "DELETE FROM Employees WHERE UserID = ?",
+            (usernum,)
+        )
+    conn.commit()
+    path = Path(f"./WPMG/{usernum}")
+    if path.exists():
+        shutil.rmtree(path)
+    log.info(f"admin_del_user> SAFETY_DELETED_{usernum}")
+
+
+
+def del_prg(usernum, prgname):
+    log.debug(f"admin_del_prg_COLL")
+    path = Path(f"./WPMG/{usernum}/{prgname}")
+    if path.exists():
+        shutil.rmtree(path)
+    path = Path(f"./WPMG/{usernum}/")
+    file = path / ".wpmginfo"
+    if file.exists():
+        with open(file, "rb") as f:
+            data = pickle.load(f)
+    else:
+        data={}
+    del data[prgname]
+    with open(file, "wb") as f:
+        pickle.dump(data, f)
+    log.info(f"admin_del_prg> SAFETY_DELETED_{usernum}_{prgname}")
+
+
+
+def make_prg(usernum, prgname, types="normal"):
+    log.debug(f"admin_make_prg_COLL")
+    folder = Path(f"./WPMG/{usernum}/{prgname}/Files")
+    folder.mkdir(parents=True, exist_ok=True)
+    if types == "new_usr":
+        file = folder / "WPMGにようこそ.txt"
+        file.touch()
+    folder = Path(f"./WPMG/{usernum}/")
+    file = folder / ".wpmginfo"
+    if file.exists():
+        with open(file, "rb") as f:
+            data = pickle.load(f)
+    else:
+        data = {}
+    if prgname in data:
+        return "coll!"
+    date = datetime.now().strftime("%Y%m%d.%H%M")
+    data[prgname] = {"lastdate": date, "makedate": date}
+    with open(file, "wb") as f:
+        pickle.dump(data, f)
+    log.info(f"admin_make_prg> SAFETY_MAKED_PRG:{prgname},USER:{usernum},TYPE:{types}")
+
+def make_USER(username, passwd, prg):
+    log.debug(f"admin_make_USER_COLL")
+    passwd = ph.hash(passwd)
+    cur.execute("""select *
+                FROM Employees
+                WHERE name = ?""",
+                (username,))
+    
+    if cur.fetchone():
+        log.warning(f"admin_make_USER> USER_NAME_ERROR:{username}")
+        
+        return "coll1"
+    cur.execute("""
+        INSERT INTO Employees (name, pw)
+        VALUES (?, ?)
+    """, (username, passwd,))
+    conn.commit()
+    if prg:
+        if make_prg(cur.lastrowid, "デフォルトのプロジェクト", types="new_usr") == "coll!":
+            return "coll2"
+        log.info(f"SAFETY_MAKED_USER:{username}_MAKED_PRG")
+    else:
+        folder = Path(f"./WPMG/{cur.lastrowid}/")
+        folder.mkdir(parents=True, exist_ok=True)
+        file = folder / ".wpmginfo"
+        with open(file, "wb") as f:
+            pickle.dump({}, f)
+        log.info(f"SAFETY_MAKED_USER:{username}_NOT_MAKED_PRG")
+
+
+
+
+def admin_aut(pw1, pw2, opt=False):
     log.debug(f"admin_admin_aut_COLL")
     with open("admin.pw", "r") as f:
         text = f.read()
         log.debug(f"admin_admin_aut> admin_pwfile_SUCCESS_TO_READ")
     try:
         ph.verify(text, f"a24d{pw1};?HASH!!uiher853976{pw2}")
-        log.warning(f"admin_admin_aut> LOGIN_SUCCESS")
+        if opt:
+            log.warning(f"admin_admin_aut> AUT_SUCCESS")
+        else:
+            log.warning(f"admin_admin_aut> LOGIN_SUCCESS")
         return True
     except:
-        log.error(f"admin_admin_aut> ADMIN_LOGIN_FAILED")
+        if opt:
+            log.error(f"admin_admin_aut> ADMIN_AUT_FAILED")
+        else:
+            log.error(f"admin_admin_aut> ADMIN_LOGIN_FAILED")
         return False
     
 
@@ -287,8 +389,9 @@ def Com(name,old_name, pw, mode):
             FROM Employees
             WHERE name = ?""",
             (name,))
-        log.warning(f"{stm.session_state.login[0]}_Com> USER_NAME_ERROR")
+        
         if cur.fetchone():
+            log.warning(f"{stm.session_state.login[0]}_Com> USER_NAME_ERROR")
             return "coll!"
     elif mode == "p":
         mode = "pw"
@@ -313,7 +416,7 @@ def News_add(title, date, by, to, text):
     log.info(f"admin_News_add> NEWS_{title}_UPED")
 
 def news(num=5, user=None):
-    log.debug(f"{stm.session_state.login[0]}_news_COLL")
+    
     if user == True:
         if num == 0:
             return cur.execute("""
@@ -344,7 +447,7 @@ def news(num=5, user=None):
             LIMIT ?;
         """, (user,num)).fetchall()
 
-def rt_user():
+def rt_user(opt = False):
     """
     ## ユーザー名:ユーザー番号
     を返す
@@ -353,6 +456,11 @@ def rt_user():
     user ={}
     for row in cur.execute("""SELECT * FROM Employees;"""):
         user[row[1]]=row[0]
+    if opt:
+        user_name = []
+        for i in user:
+            user_name.append(i)
+        return user, user_name
     return user
 
 
@@ -374,9 +482,7 @@ def cash_CL():
             del stm.session_state[i]
     stm.rerun()
 
-###------------------------------------------------------------------------------------------------------------------------------------------------------###
-###--------------------------------------------------------------------<<LOG>>-------------------------------------------------------------------###
-###------------------------------------------------------------------------------------------------------------------------------------------------------###
+
 
 if "admin" in stm.query_params and "menu" not in stm.session_state:
     if stm.query_params["admin"] == "true":
@@ -563,9 +669,9 @@ elif stm.session_state.login:
                 
 
             if select1 == "ユーザー管理":
-                select2 = stm.sidebar.selectbox("機能選択", ["ユーザー追加", "ユーザー削除", "ユーザー情報設定"])
+                select2 = stm.sidebar.selectbox("機能選択", ["ユーザー追加", "ユーザー削除"])
                 if select2 == "ユーザー追加":
-                    with stm.form("USER_ADD"):
+                    with stm.form("USER_ADD", clear_on_submit=True):
                         stm.markdown("## ユーザー追加", text_alignment="center")
                         col1, col2 = stm.columns([1,1])
                         with col1:
@@ -574,16 +680,46 @@ elif stm.session_state.login:
                         with col2:
                             n_passwd = stm.text_input("パスワード", type="password")
                         if stm.form_submit_button("作成", width="stretch"):
-                            pass
-            
+                            result = make_USER(n_name, n_passwd, new_prg)
+                            if result:
+                                stm.toast(f"作成エラー:{result}")
+                            else:
+                                stm.rerun()
+                if select2 == "ユーザー削除":
+                    with stm.container(border=True):
+                        stm.markdown("## ユーザー削除", text_alignment="center")
+                        col1, col2 = stm.columns([1,1])
+                        user_dic, user_list = rt_user(opt=True)
+                        with col1:
+                            sel_user = stm.selectbox("**ユーザー**", user_list)
+                            prg_del = stm.checkbox("プロジェクトを削除")
+                            if prg_del:
+                                prg_del_name = stm.selectbox("プロジェクトを選択", rt_prg(user_dic[sel_user]))
+                            else:
+                                prg_del_name = None
+
+                        with col2:
+                            ps1 = stm.text_input("管理者パスワード", type="password")
+                            ps2 = stm.text_input("管理者2", label_visibility="collapsed", type="password")
+                            stm.space("xxsmall")
+                            if stm.button("削除", width="stretch"):
+                                if admin_aut(ps1, ps2, opt=True):
+                                    if prg_del and prg_del_name:
+                                        del_prg(user_dic[sel_user], prg_del_name)
+                                    else:
+                                        del_user(user_dic[sel_user])
+                                    stm.rerun()
+                                else:
+                                    stm.toast("認証エラー:パスワードが違います")
+
+                
         if "menu" in stm.session_state and "PRG" in stm.session_state["menu"]:
             
             with stm.container(border=True):
                 col1, col2 = stm.columns([3,2], vertical_alignment="bottom")
                 with col1:
                     stm.markdown(f"# {stm.session_state.prg[0]}", text_alignment="center")     # Ex:['prg8', '2026/07/26.12:30']  sessionstate.prg
-                with col2:
-                    stm.markdown(f"**最終アクセス:{stm.session_state.prg[1]}**")
+                
                 info = stm.tabs(["プロジェクト情報", "ファイル編集","プロジェクト設定"])
                 
             
@@ -695,7 +831,9 @@ elif stm.session_state.login:
                 with col3:
                     stm.form_submit_button("検索", key="p_sarch",help="ヘルプ:「?」を挟むことで複数単語の検索が可能です")
                 with col4:
-                    stm.form_submit_button("新規作成", key="new_prg", width="stretch")
+                    if stm.form_submit_button("新規作成", width="stretch"):
+                        make_prg_user(stm.session_state.login[0])
+
                 if not stm.session_state.p_sarch or stm.session_state.p_sarBOX=="":
                     listp = all_prg(stm.session_state.login[0], num=True)
                     pass
@@ -741,7 +879,10 @@ elif stm.session_state.login:
                 if other_btn:
                     stm.session_state.prg_OPP = True
                     stm.rerun()
-            stm.markdown("**最近開いたプロジェクト(上位三件)**", text_alignment="left")
+            if prg == []:
+                stm.markdown("### プロジェクトはありません", text_alignment="center")
+            else:
+                stm.markdown("**最近開いたプロジェクト(上位三件)**", text_alignment="left")
             for i in prg:
                 with stm.container(border=True):
                     col1, col2, col3 = stm.columns([2,3,2], vertical_alignment="center")
